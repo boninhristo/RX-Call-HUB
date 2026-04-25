@@ -15,6 +15,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Пълна история — иначе „git push“ в края често пада при shallow clone
+          fetch-depth: 0
 
       - name: Get version
         id: version
@@ -55,6 +58,8 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          RUST_BACKTRACE: 1
         run: npx tauri build
 
       - name: NSIS file
@@ -79,6 +84,8 @@ jobs:
 
       - name: public/update.json + push
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $v = "${{ steps.version.outputs.version }}"
           $tag = "v$v"
@@ -92,4 +99,11 @@ jobs:
           git add public/update.json
           if (git diff --staged --quiet) { exit 0 }
           git commit -m "chore: public/update.json for v$v"
-          git push
+          $ref = "${{ github.ref_name }}"
+          git remote set-url origin "https://x-access-token:$env:GH_TOKEN@github.com/${{ github.repository }}.git"
+          # Докато тече билдът, main може да е напреднал → push без rebase се отхвърля
+          git fetch origin $ref
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git rebase "origin/$ref"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin "HEAD:$ref"
