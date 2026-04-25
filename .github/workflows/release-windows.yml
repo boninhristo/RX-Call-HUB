@@ -1,4 +1,4 @@
-comm компилира Windows .exe, качва го в GitHub Releases и обновява public/update.json
+# Ще компилира Windows .exe, качва го в GitHub Releases и обновява public/update.json
 # (за авто-ъпдейт). Старт: Actions → "Release Windows" → Run workflow.
 # ПРЕДИ: вдигни "version" в src-tauri/tauri.conf.json и в src-tauri/Cargo.toml на еднакви числа, commit, push.
 name: Release Windows
