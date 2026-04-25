@@ -34,6 +34,23 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      # Vite вгражда VITE_* при build — без това .exe няма Supabase (същото като локален tauri build без .env)
+      - name: Create .env
+        shell: pwsh
+        env:
+          U: ${{ secrets.VITE_SUPABASE_URL }}
+          P: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          A: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:U)) { throw "GitHub: Settings -> Secrets and variables -> Actions: задай VITE_SUPABASE_URL" }
+          if ([string]::IsNullOrWhiteSpace($env:P)) { $pEmpty = $true } else { $pEmpty = $false }
+          if ([string]::IsNullOrWhiteSpace($env:A)) { $aEmpty = $true } else { $aEmpty = $false }
+          if ($pEmpty -and $aEmpty) { throw "Задай VITE_SUPABASE_PUBLISHABLE_KEY и/или VITE_SUPABASE_ANON_KEY" }
+          $c = "VITE_SUPABASE_URL=" + $env:U + "`n"
+          if (-not $pEmpty) { $c += "VITE_SUPABASE_PUBLISHABLE_KEY=" + $env:P + "`n" }
+          if (-not $aEmpty) { $c += "VITE_SUPABASE_ANON_KEY=" + $env:A + "`n" }
+          $c | Set-Content -Path .env -Encoding utf8
+
       - name: Install
         run: npm ci
 
