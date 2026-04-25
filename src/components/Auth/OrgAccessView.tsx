@@ -63,6 +63,13 @@ export function OrgAccessView({ onResolved }: OrgAccessViewProps) {
         </button>
 
         {error && <p className="mt-3 text-sm text-red-400/90 text-center">{error}</p>}
+
+        <p
+          className="mt-6 pt-4 border-t border-[var(--color-bg-card)] text-center text-[10px] tracking-[0.2em] uppercase text-[var(--color-accent)]/75"
+          aria-label={`Версия ${__APP_VERSION__}`}
+        >
+          build {__APP_VERSION__}
+        </p>
       </div>
     </div>
   );

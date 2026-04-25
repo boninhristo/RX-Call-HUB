@@ -193,6 +193,13 @@ export function LoginView({ companyId, onSuccess, onBackToAccessCode }: LoginVie
         <p className="mt-4 text-[10px] text-[var(--color-accent)]/70 text-center leading-relaxed">
           Администраторът има пълен достъп и настройки за служители. Служителите виждат само клиенти и статистика за собствените си действия.
         </p>
+
+        <p
+          className="mt-4 pt-3 border-t border-[var(--color-bg-card)] text-center text-[10px] tracking-[0.2em] uppercase text-[var(--color-accent)]/75"
+          aria-label={`Версия ${__APP_VERSION__}`}
+        >
+          build {__APP_VERSION__}
+        </p>
       </div>
     </div>
   );

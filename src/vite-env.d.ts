@@ -1,5 +1,8 @@
 /// <reference types="vite/client" />
 
+/** Версия от package.json (inject от Vite) — за малък етикет в UI. */
+declare const __APP_VERSION__: string;
+
 interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL?: string;
   readonly VITE_SUPABASE_PUBLISHABLE_KEY?: string;

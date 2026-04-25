@@ -1,5 +1,5 @@
 {
-  "version": "0.1.2",
-  "downloadUrl": "https://github.com/boninhristo/RX-Call-HUB/releases/download/v0.1.2/RXG%20call%20hub_0.1.2_x64-setup.exe",
-  "releaseNotes": "0.1.2: CI build със secrets за Supabase"
+  "version": "1.3.0",
+  "downloadUrl": "https://github.com/boninhristo/RX-Call-HUB/releases/download/v1.3.0/RXG%20call%20hub_1.3.0_x64-setup.exe",
+  "releaseNotes": "1.3.0: етикет за версия на началния екран + поправка apply_automatic_update"
 }
