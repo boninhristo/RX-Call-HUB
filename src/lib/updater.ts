@@ -25,5 +25,6 @@ export async function checkForAppUpdate(): Promise<AppUpdateInfo | null> {
  * (Само Windows, release; в dev – грешка от Rust.)
  */
 export async function applyAutomaticUpdate(downloadUrl: string): Promise<void> {
-  await invoke("apply_automatic_update", { downloadUrl });
+  // Tauri 2: вторият параметър на командата в Rust се казва `args` → payload трябва да е под ключ `args`.
+  await invoke("apply_automatic_update", { args: { downloadUrl } });
 }
