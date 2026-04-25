@@ -1,0 +1,44 @@
+{
+  "name": "tauri-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "migrate": "node scripts/migrate-sqlite-to-supabase.mjs",
+    "import-clients": "node scripts/import-clients-xlsx.mjs",
+    "import-ast-cml": "node scripts/import-ast-cml-xlsx.mjs",
+    "import-ast-cml-new-only": "node scripts/import-ast-cml-new-only.mjs",
+    "import-turnover": "node scripts/import-client-turnover-xlsx.mjs",
+    "delete-ast-not-in-contact": "node scripts/delete-ast-not-in-contact.mjs",
+    "purge-rxg": "node scripts/purge-rxg-clients.mjs",
+    "reset-rxg-import": "node scripts/reset-rxg-clients-from-xlsx.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.101.1",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-fs": "^2.4.5",
+    "@tauri-apps/plugin-opener": "^2",
+    "html2canvas": "^1.4.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.1",
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.0",
+    "sql.js": "^1.14.1",
+    "tailwindcss": "^4.2.1",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4"
+  }
+}

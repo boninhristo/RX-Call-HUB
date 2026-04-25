@@ -1,0 +1,7 @@
+# URL към малък JSON (манифест) – първият непразен ред, който започва с https://, без # отпред.
+# Google Drive/директен .exe: не вървят добре с автоматичното обновяване.
+# Лесният път: публичен репо в GitHub, файл public/update.json (слез Actions „Release Windows“
+# се пълни сам). Сложи тук (например):
+# https://raw.githubusercontent.com/ТВОИЯ_USER/klienti/main/public/update.json
+# Ако няма https ред, програмата няма да търси ъпдейт.
+https://raw.githubusercontent.com/boninhristo/RX-Call-HUB/main/public/update.json

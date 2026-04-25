@@ -1,0 +1,5 @@
+{
+  "version": "0.2.0",
+  "downloadUrl": "https://example.com/path/RXG_call_hub_0.2.0_x64-setup.exe",
+  "releaseNotes": "NSIS setup от `tauri build` — програмата пуска тихо /S, после рестарт."
+}
