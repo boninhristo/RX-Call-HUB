@@ -29,7 +29,7 @@ jobs:
       - name: Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Rust
@@ -90,7 +90,9 @@ jobs:
           $v = "${{ steps.version.outputs.version }}"
           $tag = "v$v"
           $name = "${{ steps.nsis.outputs.name }}"
-          $enc = [uri]::EscapeDataString($name)
+          # GitHub /releases/download/... линковете нормализират интервали в името на asset към точки (не %20) — иначе 404 при сваляне
+          $nameForUrl = $name -replace " ", "."
+          $enc = [uri]::EscapeDataString($nameForUrl)
           $url = "https://github.com/${{ github.repository }}/releases/download/${tag}/$enc"
           $o = [ordered]@{ version = $v; downloadUrl = $url; releaseNotes = "Release $tag" }
           ($o | ConvertTo-Json) | Set-Content -Path "public/update.json" -Encoding utf8
