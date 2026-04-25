@@ -1,4 +1,4 @@
-# Ще компилира Windows .exe, качва го в GitHub Releases и обновява public/update.json
+comm компилира Windows .exe, качва го в GitHub Releases и обновява public/update.json
 # (за авто-ъпдейт). Старт: Actions → "Release Windows" → Run workflow.
 # ПРЕДИ: вдигни "version" в src-tauri/tauri.conf.json и в src-tauri/Cargo.toml на еднакви числа, commit, push.
 name: Release Windows
@@ -99,6 +99,8 @@ jobs:
           git add public/update.json
           if (git diff --staged --quiet) { exit 0 }
           git commit -m "chore: public/update.json for v$v"
+          # Cargo/tauri понякога променят tracked файлове (напр. Cargo.lock) без да са в commit → rebase гърми с „unstaged changes“
+          git reset --hard HEAD
           $ref = "${{ github.ref_name }}"
           git remote set-url origin "https://x-access-token:$env:GH_TOKEN@github.com/${{ github.repository }}.git"
           # Докато тече билдът, main може да е напреднал → push без rebase се отхвърля
