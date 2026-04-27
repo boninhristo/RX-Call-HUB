@@ -1,9 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  addConversation,
   createClient,
   getClientsPage,
   lookupClientsByEiks,
   normalizeEikKey,
+  updateClientInContact,
   type Client,
   type ClientEikLookupRow,
 } from "../../lib/db";
@@ -23,10 +25,38 @@ import {
   type KsbGroupOption,
   type KsbListRow,
 } from "../../lib/ksbRegister";
+import {
+  emitClientsChanged,
+  openKsbWindow,
+  readStandaloneWindowParam,
+} from "../../lib/multiWindow";
 
 interface KsbRegisterViewProps {
   onOpenClient?: (clientId: number, label: string) => void;
+  /**
+   * Когато е `true`, контейнерът заема пълна ширина (без `max-w-5xl`). Ползва се при
+   * вграждане в split view или в самостоятелен прозорец.
+   */
+  compact?: boolean;
 }
+
+function nowLocalDatetimeInputValue(): string {
+  const d = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+interface RowConversationDraft {
+  type: "phone" | "in_person";
+  date: string;
+  notes: string;
+}
+
+function freshConversationDraft(): RowConversationDraft {
+  return { type: "phone", date: nowLocalDatetimeInputValue(), notes: "" };
+}
+
+type AttachTarget = { kind: "new" } | { kind: "existing"; clientId: number };
 
 function matchLabel(rows: ClientEikLookupRow[] | undefined): { text: string; tone: "muted" | "ok" | "warn" } {
   if (!rows || rows.length === 0) return { text: "Няма в базата", tone: "muted" };
@@ -42,7 +72,10 @@ function matchLabel(rows: ClientEikLookupRow[] | undefined): { text: string; ton
   return { text: `В базата: ${names} — не е в контакт`, tone: "warn" };
 }
 
-export function KsbRegisterView({ onOpenClient }: KsbRegisterViewProps) {
+export function KsbRegisterView({ onOpenClient, compact = false }: KsbRegisterViewProps) {
+  const isStandalone = readStandaloneWindowParam() === "ksb";
+  const fullWidth = compact || isStandalone;
+
   const [tauriOk, setTauriOk] = useState<boolean | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
   const [regions, setRegions] = useState<{ value: string; label: string }[]>([]);
@@ -74,6 +107,17 @@ export function KsbRegisterView({ onOpenClient }: KsbRegisterViewProps) {
   const [addBusy, setAddBusy] = useState(false);
   const [addMsg, setAddMsg] = useState<string | null>(null);
   const detailFetchGen = useRef(0);
+
+  /** Чернова на разговор за разгънатия ред (ресет при смяна на ред / след запис). */
+  const [convDraft, setConvDraft] = useState<RowConversationDraft>(freshConversationDraft);
+  /** Inline избор „нов или прикачи към съществуващ“ при дублиран ЕИК. */
+  const [pickExisting, setPickExisting] = useState<{
+    matches: ClientEikLookupRow[];
+    chosenClientId: number | null;
+  } | null>(null);
+
+  const [openWindowBusy, setOpenWindowBusy] = useState(false);
+  const [openWindowError, setOpenWindowError] = useState<string | null>(null);
 
   const displayRows = useMemo(() => {
     const term = listKeyword.trim();
@@ -247,9 +291,14 @@ export function KsbRegisterView({ onOpenClient }: KsbRegisterViewProps) {
       setDetailError(null);
       setDetailLoading(false);
       setAddMsg(null);
+      setConvDraft(freshConversationDraft());
+      setPickExisting(null);
       return;
     }
     setExpandedId(row.idMembers);
+    setConvDraft(freshConversationDraft());
+    setPickExisting(null);
+    setAddMsg(null);
     void loadDetailForRow(row);
   };
 
@@ -292,28 +341,101 @@ export function KsbRegisterView({ onOpenClient }: KsbRegisterViewProps) {
     return eikMap.get(normalizeEikKey(detail.eik)) ?? [];
   }, [detail, eikMap]);
 
-  const handleAddClient = async () => {
+  const performAddOrAttach = async (target: AttachTarget) => {
     if (!detail) return;
-    const matches = eikMap.get(normalizeEikKey(detail.eik)) ?? [];
-    if (matches.length > 0) {
-      const ok = window.confirm(
-        `В базата вече има ${matches.length} клиент(и) с този ЕИК. Да се добави още един запис?`
-      );
-      if (!ok) return;
-    }
+    const hasConv = convDraft.notes.trim().length > 0;
     setAddBusy(true);
     setAddMsg(null);
     try {
-      const draft = ksbFirmDetailToClientDraft(detail);
-      const id = await createClient(draft);
-      setAddMsg(`Добавен клиент #${id}: ${draft.name}`);
-      await runEikLookup(
-        listRows.length > 0 ? [...listRows.map((r) => r.eik), detail.eik] : [detail.eik]
-      );
+      let convDateIso: string | null = null;
+      if (hasConv) {
+        const parsed = new Date(convDraft.date);
+        if (Number.isNaN(parsed.getTime())) {
+          throw new Error("Невалидна дата на разговора.");
+        }
+        convDateIso = parsed.toISOString();
+      }
+
+      let clientId: number;
+      let clientName: string;
+      if (target.kind === "existing") {
+        clientId = target.clientId;
+        const existing = (eikMap.get(normalizeEikKey(detail.eik)) ?? []).find(
+          (c) => c.id === clientId
+        );
+        clientName = existing?.name ?? `#${clientId}`;
+        if (hasConv && convDateIso) {
+          await addConversation(clientId, convDateIso, convDraft.type, convDraft.notes.trim());
+        }
+        await updateClientInContact(clientId, true);
+      } else {
+        const draft = ksbFirmDetailToClientDraft(detail);
+        clientId = await createClient({ ...draft, in_contact: hasConv ? 1 : 0 });
+        clientName = draft.name;
+        if (hasConv && convDateIso) {
+          await addConversation(clientId, convDateIso, convDraft.type, convDraft.notes.trim());
+        }
+      }
+
+      const verb =
+        target.kind === "existing"
+          ? hasConv
+            ? `Прикачен разговор + „в контакт“ за ${clientName} (#${clientId})`
+            : `Маркиран „в контакт“: ${clientName} (#${clientId})`
+          : hasConv
+            ? `Добавен клиент #${clientId} (${clientName}) + разговор`
+            : `Добавен клиент #${clientId}: ${clientName}`;
+      setAddMsg(verb);
+
+      const eiks = listRows.length > 0 ? [...listRows.map((r) => r.eik), detail.eik] : [detail.eik];
+      await runEikLookup(eiks);
+
+      setConvDraft(freshConversationDraft());
+      setPickExisting(null);
+
+      window.dispatchEvent(new CustomEvent("klienti-clients-changed"));
+      void emitClientsChanged();
     } catch (e) {
       setAddMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setAddBusy(false);
+    }
+  };
+
+  const handleAddClient = async () => {
+    if (!detail) return;
+    const matches = eikMap.get(normalizeEikKey(detail.eik)) ?? [];
+    if (matches.length === 0) {
+      await performAddOrAttach({ kind: "new" });
+      return;
+    }
+    if (matches.length === 1) {
+      const m = matches[0];
+      const ok = window.confirm(
+        `В базата вече има клиент: ${m.name}` +
+          (m.in_contact ? " (в контакт)" : "") +
+          `\n\nОК = прикачи към съществуващия` +
+          `\nОтказ = създай нов запис`
+      );
+      await performAddOrAttach(ok ? { kind: "existing", clientId: m.id } : { kind: "new" });
+      return;
+    }
+    setPickExisting({
+      matches,
+      chosenClientId: matches.find((m) => m.in_contact === 1)?.id ?? matches[0].id,
+    });
+    setAddMsg(null);
+  };
+
+  const handleOpenInWindow = async () => {
+    setOpenWindowBusy(true);
+    setOpenWindowError(null);
+    try {
+      await openKsbWindow();
+    } catch (e) {
+      setOpenWindowError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOpenWindowBusy(false);
     }
   };
 
@@ -337,16 +459,36 @@ export function KsbRegisterView({ onOpenClient }: KsbRegisterViewProps) {
   }
 
   return (
-    <div className="space-y-6 max-w-5xl">
-      <div>
-        <h1 className="text-lg font-medium text-[var(--color-text-bright)]">КСБ — регистър на строители</h1>
-        <p className="text-xs text-[var(--color-accent)] mt-1">
-          Данни от{" "}
-          <a className="underline hover:text-[var(--color-text)]" href="https://register.ksb.bg/listFirms.php">
-            register.ksb.bg
-          </a>
-          . Зареждане при всяко действие; запис във вашата база само с „Добави в клиенти“.
-        </p>
+    <div className={`space-y-6 ${fullWidth ? "" : "max-w-5xl"}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-medium text-[var(--color-text-bright)]">КСБ — регистър на строители</h1>
+          <p className="text-xs text-[var(--color-accent)] mt-1">
+            Данни от{" "}
+            <a className="underline hover:text-[var(--color-text)]" href="https://register.ksb.bg/listFirms.php">
+              register.ksb.bg
+            </a>
+            . Зареждане при всяко действие; запис във вашата база само с „Добави в клиенти“.
+          </p>
+        </div>
+        {!isStandalone && (
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => void handleOpenInWindow()}
+              disabled={openWindowBusy}
+              className="px-3 py-2 rounded-lg bg-[var(--color-bg-card)] text-[var(--color-text)] text-xs hover:bg-[var(--color-bg-card)]/80 disabled:opacity-50"
+              title="Отвори КСБ в отделен Tauri прозорец"
+            >
+              {openWindowBusy ? "Отваряне…" : "Отвори в отделен прозорец"}
+            </button>
+            {openWindowError && (
+              <span className="text-[10px] text-red-300/90 max-w-[14rem] text-right">
+                {openWindowError}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="rounded-lg border border-[var(--color-bg-card)] p-4 space-y-2 max-w-2xl">
@@ -613,6 +755,112 @@ export function KsbRegisterView({ onOpenClient }: KsbRegisterViewProps) {
                                       </ul>
                                     )}
                                   </div>
+                                  <div className="rounded-lg border border-[var(--color-bg-card)] p-2 space-y-2">
+                                    <p className="text-[var(--color-text-bright)] text-sm">
+                                      Разговор (по избор)
+                                    </p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                      <select
+                                        value={convDraft.type}
+                                        onChange={(e) =>
+                                          setConvDraft((d) => ({
+                                            ...d,
+                                            type: e.target.value as "phone" | "in_person",
+                                          }))
+                                        }
+                                        className="px-3 py-2 rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-bg-card)] text-sm text-[var(--color-text)]"
+                                      >
+                                        <option value="phone">Телефон</option>
+                                        <option value="in_person">На място</option>
+                                      </select>
+                                      <input
+                                        type="datetime-local"
+                                        value={convDraft.date}
+                                        onChange={(e) =>
+                                          setConvDraft((d) => ({ ...d, date: e.target.value }))
+                                        }
+                                        className="px-3 py-2 rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-bg-card)] text-sm text-[var(--color-text)]"
+                                      />
+                                    </div>
+                                    <textarea
+                                      value={convDraft.notes}
+                                      onChange={(e) =>
+                                        setConvDraft((d) => ({ ...d, notes: e.target.value }))
+                                      }
+                                      rows={4}
+                                      placeholder="Какво се обсъди…"
+                                      className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-bg-card)] text-[11px] leading-relaxed text-[var(--color-text)] placeholder:text-[var(--color-accent)]/60 resize-y"
+                                    />
+                                    <p className="text-[10px] text-[var(--color-accent)] leading-snug">
+                                      Ако е попълнен: при „Добави в клиенти“ записва разговора и маркира клиента „в контакт“. Ако е празен — само добавя клиента.
+                                    </p>
+                                  </div>
+                                  {pickExisting && (
+                                    <div className="rounded-lg border border-amber-400/40 p-2 space-y-2 bg-amber-500/5">
+                                      <p className="text-[var(--color-text-bright)] text-sm">
+                                        В базата вече има {pickExisting.matches.length} клиента с този ЕИК
+                                      </p>
+                                      <ul className="space-y-1">
+                                        {pickExisting.matches.map((m) => (
+                                          <li key={m.id} className="flex items-start gap-2">
+                                            <input
+                                              type="radio"
+                                              id={`pick-${m.id}`}
+                                              name="ksb-pick-existing"
+                                              checked={pickExisting.chosenClientId === m.id}
+                                              onChange={() =>
+                                                setPickExisting((p) =>
+                                                  p ? { ...p, chosenClientId: m.id } : p
+                                                )
+                                              }
+                                              className="mt-0.5"
+                                            />
+                                            <label
+                                              htmlFor={`pick-${m.id}`}
+                                              className="text-[var(--color-text)] cursor-pointer"
+                                            >
+                                              {m.name}
+                                              <span className="text-[var(--color-accent)] ml-2">
+                                                #{m.id}
+                                                {m.in_contact === 1 ? " · в контакт" : ""}
+                                              </span>
+                                            </label>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <button
+                                          type="button"
+                                          disabled={addBusy || pickExisting.chosenClientId == null}
+                                          onClick={() => {
+                                            if (pickExisting.chosenClientId == null) return;
+                                            void performAddOrAttach({
+                                              kind: "existing",
+                                              clientId: pickExisting.chosenClientId,
+                                            });
+                                          }}
+                                          className="px-3 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg-primary)] text-sm font-medium disabled:opacity-50"
+                                        >
+                                          Прикачи към избрания
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={addBusy}
+                                          onClick={() => void performAddOrAttach({ kind: "new" })}
+                                          className="px-3 py-2 rounded-lg bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm hover:bg-[var(--color-bg-card)]/80 disabled:opacity-50"
+                                        >
+                                          Създай нов запис
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setPickExisting(null)}
+                                          className="px-2 py-1 rounded-md text-xs text-[var(--color-accent)] hover:text-[var(--color-text-bright)]"
+                                        >
+                                          Отказ
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
                                   <div className="flex flex-wrap items-center gap-2">
                                     <button
                                       type="button"

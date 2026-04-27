@@ -22,6 +22,7 @@ import type { AppRole } from "../../lib/auth";
 import { ClientForm } from "./ClientForm";
 import { ClientDetail } from "./ClientDetail";
 import { useTableSelection } from "../../hooks/useTableSelection";
+import { onClientsChanged } from "../../lib/multiWindow";
 
 const CLIENTS_PAGE_SIZE = 200;
 
@@ -129,6 +130,29 @@ export function ClientsView({ role, initialSelectedId, onNavigated }: ClientsVie
       });
     }
   }, [initialSelectedId]);
+
+  useEffect(() => {
+    const onChanged = () => loadClients();
+    window.addEventListener("klienti-clients-changed", onChanged);
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    onClientsChanged(() => loadClients())
+      .then((u) => {
+        if (cancelled) {
+          u();
+          return;
+        }
+        unlisten = u;
+      })
+      .catch(() => {
+        /* ignore */
+      });
+    return () => {
+      cancelled = true;
+      window.removeEventListener("klienti-clients-changed", onChanged);
+      unlisten?.();
+    };
+  }, []);
 
   const handleSort = (col: ClientsSortColumn) => {
     if (showDeleted) return;

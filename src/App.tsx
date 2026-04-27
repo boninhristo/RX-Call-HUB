@@ -26,6 +26,11 @@ import {
 import { countTodayPendingReminders, type SearchResult } from "./lib/db";
 import { checkForAppUpdate, type AppUpdateInfo } from "./lib/updater";
 import { UpdateInProgressScreen } from "./components/Update/UpdateInProgressScreen";
+import {
+  emitOpenClient,
+  onOpenClient,
+  readStandaloneWindowParam,
+} from "./lib/multiWindow";
 
 function App() {
   const [appUpdate, setAppUpdate] = useState<"check" | "ok" | AppUpdateInfo>("check");
@@ -36,6 +41,7 @@ function App() {
   const [searchTarget, setSearchTarget] = useState<SearchResult | null>(null);
   const [searchQuery, setSearchQuery] = useState<string | null>(null);
   const [reminderTodayCount, setReminderTodayCount] = useState(0);
+  const standaloneWindow = readStandaloneWindowParam();
 
   const refreshReminderCount = useCallback(() => {
     if (authRole == null) return;
@@ -98,7 +104,8 @@ function App() {
       currentView !== "clients" &&
       currentView !== "statistics" &&
       currentView !== "reminders" &&
-      currentView !== "ksb"
+      currentView !== "ksb" &&
+      currentView !== "split"
     ) {
       setCurrentView("clients");
       setSearchTarget(null);
@@ -122,6 +129,32 @@ function App() {
       window.removeEventListener("klienti-reminders-changed", onRem);
     };
   }, [authRole, currentView, refreshReminderCount]);
+
+  useEffect(() => {
+    if (standaloneWindow != null) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    onOpenClient(({ id, label }) => {
+      if (cancelled) return;
+      setCurrentView((v) => (v === "split" ? v : "clients"));
+      setSearchTarget({ type: "client", id, label });
+      setSearchQuery(null);
+    })
+      .then((u) => {
+        if (cancelled) {
+          u();
+          return;
+        }
+        unlisten = u;
+      })
+      .catch(() => {
+        /* ignore */
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [standaloneWindow]);
 
   const handleLoginSuccess = useCallback((payload: LoginSuccessPayload) => {
     if (payload.role === "admin") {
@@ -157,7 +190,9 @@ function App() {
         competitor: "competition",
         supplier_product: "suppliers",
       };
-      setCurrentView(viewMap[result.type]);
+      setCurrentView((v) =>
+        v === "split" && result.type === "client" ? "split" : viewMap[result.type]
+      );
       setSearchTarget(result);
       setSearchQuery(null);
     },
@@ -204,6 +239,15 @@ function App() {
   }
 
   if (boot === "needCode" || companyId == null) {
+    if (standaloneWindow === "ksb") {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg-primary)] text-sm text-[var(--color-accent)] p-6 text-center">
+          Не е намерен контекст на фирма.
+          <br />
+          Логнете се в главния прозорец и опитайте отново.
+        </div>
+      );
+    }
     return (
       <OrgAccessView
         onResolved={(id) => {
@@ -215,12 +259,39 @@ function App() {
   }
 
   if (!authRole) {
+    if (standaloneWindow === "ksb") {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg-primary)] text-sm text-[var(--color-accent)] p-6 text-center">
+          Влезте в главния прозорец преди да използвате КСБ в отделен прозорец.
+        </div>
+      );
+    }
     return (
       <LoginView
         companyId={companyId}
         onSuccess={handleLoginSuccess}
         onBackToAccessCode={handleBackToAccessCode}
       />
+    );
+  }
+
+  if (standaloneWindow === "ksb") {
+    return (
+      <div className="min-h-screen flex flex-col bg-[var(--color-bg-primary)]">
+        <header className="h-12 flex items-center px-4 border-b border-[var(--color-bg-card)] bg-[var(--color-bg-secondary)] shrink-0">
+          <h1 className="text-sm font-medium text-[var(--color-text-bright)] tracking-tight">
+            КСБ — регистър
+          </h1>
+        </header>
+        <main className="flex-1 overflow-auto p-4 min-h-0">
+          <KsbRegisterView
+            compact
+            onOpenClient={(clientId, label) => {
+              void emitOpenClient({ id: clientId, label });
+            }}
+          />
+        </main>
+      </div>
     );
   }
 
@@ -293,6 +364,29 @@ function App() {
                 setSearchQuery(null);
               }}
             />
+          )}
+          {currentView === "split" && (
+            <div className="flex gap-3 h-full min-h-0">
+              <div className="flex-1 min-w-0 overflow-auto pr-1">
+                <ClientsView
+                  role={authRole}
+                  initialSelectedId={
+                    searchTarget?.type === "client" ? searchTarget.id : undefined
+                  }
+                  onNavigated={clearSearchTarget}
+                />
+              </div>
+              <div className="w-px bg-[var(--color-bg-card)] shrink-0" />
+              <div className="flex-1 min-w-0 overflow-auto pl-1">
+                <KsbRegisterView
+                  compact
+                  onOpenClient={(clientId, label) => {
+                    setSearchTarget({ type: "client", id: clientId, label });
+                    setSearchQuery(null);
+                  }}
+                />
+              </div>
+            </div>
           )}
           {currentView === "statistics" && <StatisticsView role={authRole} onOpenClient={(clientId, label) => {
             setCurrentView("clients");

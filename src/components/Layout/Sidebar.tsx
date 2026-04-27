@@ -1,6 +1,6 @@
 import type { AppRole } from "../../lib/auth";
 
-type MainView = "clients" | "suppliers" | "transport" | "competition" | "reminders" | "ksb";
+type MainView = "clients" | "suppliers" | "transport" | "competition" | "reminders" | "ksb" | "split";
 
 export type AppMainView = MainView | "statistics" | "settings";
 
@@ -26,8 +26,14 @@ export function Sidebar({ currentView, onViewChange, role, reminderTodayCount = 
           { id: "clients", label: "Clients" },
           { id: "reminders", label: "REMINDERS" },
           { id: "ksb", label: "КСБ" },
+          { id: "split", label: "CLIENTS + КСБ" },
         ]
-      : [...mainNav, { id: "reminders", label: "REMINDERS" }, { id: "ksb", label: "КСБ" }];
+      : [
+          ...mainNav,
+          { id: "reminders", label: "REMINDERS" },
+          { id: "ksb", label: "КСБ" },
+          { id: "split", label: "CLIENTS + КСБ" },
+        ];
 
   return (
     <aside className="w-48 flex-shrink-0 bg-[var(--color-bg-secondary)] border-r border-[var(--color-bg-card)] p-3 flex flex-col h-full min-h-0">
