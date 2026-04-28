@@ -21,6 +21,7 @@ import {
   type SupplierProduct,
 } from "../../lib/db";
 import { useTableSelection } from "../../hooks/useTableSelection";
+import { useNav } from "../../lib/navHistory";
 
 interface SuppliersViewProps {
   initialSelectedId?: number;
@@ -28,6 +29,7 @@ interface SuppliersViewProps {
 }
 
 export function SuppliersView({ initialSelectedId, onNavigated }: SuppliersViewProps) {
+  const nav = useNav();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selected, setSelected] = useState<Supplier | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -256,7 +258,12 @@ export function SuppliersView({ initialSelectedId, onNavigated }: SuppliersViewP
       <div className="space-y-4">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => { setSelected(null); onNavigated?.(); }}
+            onClick={() => {
+              if (!nav.back()) {
+                setSelected(null);
+                onNavigated?.();
+              }
+            }}
             className="text-[var(--color-accent)] hover:text-[var(--color-text)] text-sm"
           >
             ← Back
@@ -652,7 +659,10 @@ export function SuppliersView({ initialSelectedId, onNavigated }: SuppliersViewP
               <tr
                 key={s.id}
                 className="border-t border-[var(--color-bg-card)] hover:bg-[var(--color-bg-card)]/30 cursor-pointer"
-                onClick={() => setSelected(s)}
+                onClick={() => {
+                  nav.push({ restore: () => setSelected(null) });
+                  setSelected(s);
+                }}
               >
                 <td className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
                   <input type="checkbox" checked={supplierSelection.isSelected(s.id)} onChange={() => {}} onClick={(e) => { e.stopPropagation(); supplierSelection.toggle(s.id, idx, suppliers, e.shiftKey); }} className="rounded border-[var(--color-bg-card)]" />

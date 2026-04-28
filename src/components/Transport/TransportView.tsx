@@ -17,6 +17,7 @@ import {
   type TransportSupplierHistory,
 } from "../../lib/db";
 import { useTableSelection } from "../../hooks/useTableSelection";
+import { useNav } from "../../lib/navHistory";
 
 const EUR_USD_API = "https://api.frankfurter.app/latest?from=EUR&to=USD";
 
@@ -41,6 +42,7 @@ interface QuoteRow {
 }
 
 export function TransportView({ initialSelectedId, onNavigated }: TransportViewProps) {
+  const nav = useNav();
   const [suppliers, setSuppliers] = useState<TransportSupplier[]>([]);
   const [selected, setSelected] = useState<TransportSupplier | null>(null);
   const [history, setHistory] = useState<TransportSupplierHistory[]>([]);
@@ -258,7 +260,12 @@ export function TransportView({ initialSelectedId, onNavigated }: TransportViewP
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <button onClick={() => setShowCompare(false)} className="text-[var(--color-accent)] hover:text-[var(--color-text)] text-sm">
+          <button
+            onClick={() => {
+              if (!nav.back()) setShowCompare(false);
+            }}
+            className="text-[var(--color-accent)] hover:text-[var(--color-text)] text-sm"
+          >
             ← Back
           </button>
           <button
@@ -346,7 +353,15 @@ export function TransportView({ initialSelectedId, onNavigated }: TransportViewP
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-4">
-          <button onClick={() => { setSelected(null); onNavigated?.(); }} className="text-[var(--color-accent)] hover:text-[var(--color-text)] text-sm">
+          <button
+            onClick={() => {
+              if (!nav.back()) {
+                setSelected(null);
+                onNavigated?.();
+              }
+            }}
+            className="text-[var(--color-accent)] hover:text-[var(--color-text)] text-sm"
+          >
             ← Back
           </button>
           <h2 className="text-lg font-medium text-[var(--color-text-bright)]">{selected.company_name}</h2>
@@ -400,7 +415,13 @@ export function TransportView({ initialSelectedId, onNavigated }: TransportViewP
           </button>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setShowCompare(true)} className="px-4 py-2 rounded-lg bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm hover:bg-[var(--color-bg-card)]/80">
+          <button
+            onClick={() => {
+              nav.push({ restore: () => setShowCompare(false) });
+              setShowCompare(true);
+            }}
+            className="px-4 py-2 rounded-lg bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm hover:bg-[var(--color-bg-card)]/80"
+          >
             Compare Quotes
           </button>
           <button onClick={() => { setShowForm(true); setFormData({}); }} className="px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-bg-primary)] text-sm font-medium">
@@ -500,7 +521,14 @@ export function TransportView({ initialSelectedId, onNavigated }: TransportViewP
               const otherEur = s.other_eur ?? 0;
               const total = seaEur + landEur + otherEur;
               return (
-                <tr key={s.id} className="border-t border-[var(--color-bg-card)] hover:bg-[var(--color-bg-card)]/30 cursor-pointer" onClick={() => setSelected(s)}>
+                <tr
+                  key={s.id}
+                  className="border-t border-[var(--color-bg-card)] hover:bg-[var(--color-bg-card)]/30 cursor-pointer"
+                  onClick={() => {
+                    nav.push({ restore: () => setSelected(null) });
+                    setSelected(s);
+                  }}
+                >
                   <td className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={transportSelection.isSelected(s.id)} onChange={() => {}} onClick={(e) => { e.stopPropagation(); transportSelection.toggle(s.id, idx, suppliers, e.shiftKey); }} className="rounded border-[var(--color-bg-card)]" />
                   </td>

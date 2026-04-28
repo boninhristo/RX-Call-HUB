@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Header } from "./Header";
 import { Sidebar, type AppMainView } from "./Sidebar";
 import type { AppRole } from "../../lib/auth";
@@ -11,6 +12,7 @@ interface LayoutProps {
   onSearchSelect?: (result: SearchResult) => void;
   onSearchEnter?: (query: string) => void;
   reminderTodayCount?: number;
+  onMainRef?: (el: HTMLElement | null) => void;
   children: React.ReactNode;
 }
 
@@ -22,8 +24,18 @@ export function Layout({
   onSearchSelect,
   onSearchEnter,
   reminderTodayCount = 0,
+  onMainRef,
   children,
 }: LayoutProps) {
+  const mainRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    onMainRef?.(mainRef.current);
+    return () => {
+      onMainRef?.(null);
+    };
+  }, [onMainRef]);
+
   return (
     <div className="h-screen flex flex-col bg-[var(--color-bg-primary)]">
       <Header role={role} onLogout={onLogout} onSearchSelect={onSearchSelect} onSearchEnter={onSearchEnter} />
@@ -34,7 +46,7 @@ export function Layout({
           onViewChange={onViewChange}
           reminderTodayCount={reminderTodayCount}
         />
-        <main className="flex-1 overflow-auto p-4 min-h-0">{children}</main>
+        <main ref={mainRef} className="flex-1 overflow-auto p-4 min-h-0">{children}</main>
       </div>
     </div>
   );

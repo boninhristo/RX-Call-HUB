@@ -4,6 +4,7 @@ import type { AppRole } from "../../lib/auth";
 import { exportDatabaseSnapshot } from "../../lib/db";
 import { GlobalSearch } from "../Search/GlobalSearch";
 import type { SearchResult } from "../../lib/db";
+import { useNav } from "../../lib/navHistory";
 
 interface HeaderProps {
   role: AppRole;
@@ -13,6 +14,7 @@ interface HeaderProps {
 }
 
 export function Header({ role, onLogout, onSearchSelect, onSearchEnter }: HeaderProps) {
+  const nav = useNav();
   const handleBackup = async () => {
     try {
       const date = new Date().toISOString().slice(0, 10);
@@ -33,6 +35,18 @@ export function Header({ role, onLogout, onSearchSelect, onSearchEnter }: Header
   return (
     <header className="h-12 flex items-center justify-between gap-4 px-4 border-b border-[var(--color-bg-card)] bg-[var(--color-bg-secondary)]">
       <div className="flex items-center gap-4 min-w-0">
+        {nav.depth > 0 && (
+          <button
+            type="button"
+            onClick={() => nav.back()}
+            title="Назад"
+            aria-label="Назад"
+            className="px-2 py-1 rounded-lg text-[var(--color-accent)] hover:bg-[var(--color-bg-card)] transition-colors text-sm flex items-center gap-1"
+          >
+            <span aria-hidden>←</span>
+            <span className="hidden sm:inline">Назад</span>
+          </button>
+        )}
         <div className="flex-shrink-0">
           <h1 className="text-sm font-medium text-[var(--color-text-bright)] tracking-tight">
             RXG call hub

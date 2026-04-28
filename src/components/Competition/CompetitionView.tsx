@@ -18,6 +18,7 @@ import {
   type CompetitorProduct,
 } from "../../lib/db";
 import { useTableSelection } from "../../hooks/useTableSelection";
+import { useNav } from "../../lib/navHistory";
 
 interface CompetitionViewProps {
   initialSelectedId?: number;
@@ -25,6 +26,7 @@ interface CompetitionViewProps {
 }
 
 export function CompetitionView({ initialSelectedId, onNavigated }: CompetitionViewProps) {
+  const nav = useNav();
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [selected, setSelected] = useState<Competitor | null>(null);
   const [products, setProducts] = useState<CompetitorProduct[]>([]);
@@ -213,7 +215,12 @@ export function CompetitionView({ initialSelectedId, onNavigated }: CompetitionV
       <div className="space-y-4">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => { setSelected(null); onNavigated?.(); }}
+            onClick={() => {
+              if (!nav.back()) {
+                setSelected(null);
+                onNavigated?.();
+              }
+            }}
             className="text-[var(--color-accent)] hover:text-[var(--color-text)] text-sm"
           >
             ← Back
@@ -601,7 +608,10 @@ export function CompetitionView({ initialSelectedId, onNavigated }: CompetitionV
               <tr
                 key={c.id}
                 className="border-t border-[var(--color-bg-card)] hover:bg-[var(--color-bg-card)]/30 cursor-pointer"
-                onClick={() => setSelected(c)}
+                onClick={() => {
+                  nav.push({ restore: () => setSelected(null) });
+                  setSelected(c);
+                }}
               >
                 <td className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
                   <input type="checkbox" checked={competitorSelection.isSelected(c.id)} onChange={() => {}} onClick={(e) => { e.stopPropagation(); competitorSelection.toggle(c.id, idx, competitors, e.shiftKey); }} className="rounded border-[var(--color-bg-card)]" />

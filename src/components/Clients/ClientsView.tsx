@@ -23,6 +23,7 @@ import { ClientForm } from "./ClientForm";
 import { ClientDetail } from "./ClientDetail";
 import { useTableSelection } from "../../hooks/useTableSelection";
 import { onClientsChanged } from "../../lib/multiWindow";
+import { useNav } from "../../lib/navHistory";
 
 const CLIENTS_PAGE_SIZE = 200;
 
@@ -33,6 +34,7 @@ interface ClientsViewProps {
 }
 
 export function ClientsView({ role, initialSelectedId, onNavigated }: ClientsViewProps) {
+  const nav = useNav();
   const [clients, setClients] = useState<Client[]>([]);
   const [deletedClients, setDeletedClients] = useState<DeletedClient[]>([]);
   const [search, setSearch] = useState("");
@@ -399,7 +401,12 @@ export function ClientsView({ role, initialSelectedId, onNavigated }: ClientsVie
     return (
       <ClientDetail
         client={selected}
-        onBack={() => { setSelected(null); onNavigated?.(); }}
+        onBack={() => {
+          if (!nav.back()) {
+            setSelected(null);
+            onNavigated?.();
+          }
+        }}
         onUpdated={loadClients}
       />
     );
@@ -678,7 +685,11 @@ export function ClientsView({ role, initialSelectedId, onNavigated }: ClientsVie
               <tr
                 key={c.id}
                 className="border-t border-[var(--color-bg-card)] hover:bg-[var(--color-bg-card)]/30 cursor-pointer"
-                onClick={() => !showDeleted && setSelected(c)}
+                onClick={() => {
+                  if (showDeleted) return;
+                  nav.push({ restore: () => setSelected(null) });
+                  setSelected(c);
+                }}
               >
                 {!showDeleted && (
                   <td className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>

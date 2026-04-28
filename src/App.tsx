@@ -8,6 +8,7 @@ import { TransportView } from "./components/Transport/TransportView";
 import { CompetitionView } from "./components/Competition/CompetitionView";
 import { SearchResultsView } from "./components/Search/SearchResultsView";
 import { StatisticsView } from "./components/Statistics/StatisticsView";
+import { DayConversationsWindow } from "./components/Statistics/DayConversationsWindow";
 import { SettingsView } from "./components/Settings/SettingsView";
 import { RemindersView } from "./components/Reminders/RemindersView";
 import { KsbRegisterView } from "./components/Ksb/KsbRegisterView";
@@ -29,10 +30,21 @@ import { UpdateInProgressScreen } from "./components/Update/UpdateInProgressScre
 import {
   emitOpenClient,
   onOpenClient,
+  readStandaloneDayParam,
   readStandaloneWindowParam,
 } from "./lib/multiWindow";
+import { NavProvider, useNav } from "./lib/navHistory";
 
 function App() {
+  return (
+    <NavProvider>
+      <AppContent />
+    </NavProvider>
+  );
+}
+
+function AppContent() {
+  const nav = useNav();
   const [appUpdate, setAppUpdate] = useState<"check" | "ok" | AppUpdateInfo>("check");
   const [boot, setBoot] = useState<"loading" | "needCode" | "ready">("loading");
   const [companyId, setCompanyId] = useState<number | null>(null);
@@ -42,6 +54,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState<string | null>(null);
   const [reminderTodayCount, setReminderTodayCount] = useState(0);
   const standaloneWindow = readStandaloneWindowParam();
+  const standaloneDay = readStandaloneDayParam();
 
   const refreshReminderCount = useCallback(() => {
     if (authRole == null) return;
@@ -173,12 +186,13 @@ function App() {
   }, []);
 
   const handleLogout = useCallback(() => {
+    nav.clear();
     clearStoredRole();
     setAuthRole(null);
     setCurrentView("clients");
     setSearchTarget(null);
     setSearchQuery(null);
-  }, []);
+  }, [nav]);
 
   const handleSearchSelect = useCallback(
     (result: SearchResult) => {
@@ -190,18 +204,35 @@ function App() {
         competitor: "competition",
         supplier_product: "suppliers",
       };
+      const prevView = currentView;
+      const prevTarget = searchTarget;
+      const prevQuery = searchQuery;
+      nav.push({
+        restore: () => {
+          setCurrentView(prevView);
+          setSearchTarget(prevTarget);
+          setSearchQuery(prevQuery);
+        },
+      });
       setCurrentView((v) =>
         v === "split" && result.type === "client" ? "split" : viewMap[result.type]
       );
       setSearchTarget(result);
       setSearchQuery(null);
     },
-    [authRole]
+    [authRole, currentView, searchTarget, searchQuery, nav]
   );
 
-  const handleSearchEnter = useCallback((query: string) => {
-    setSearchQuery(query);
-  }, []);
+  const handleSearchEnter = useCallback(
+    (query: string) => {
+      const prevQuery = searchQuery;
+      nav.push({
+        restore: () => setSearchQuery(prevQuery),
+      });
+      setSearchQuery(query);
+    },
+    [searchQuery, nav]
+  );
 
   const clearSearchTarget = useCallback(() => setSearchTarget(null), []);
 
@@ -210,6 +241,25 @@ function App() {
     setCompanyId(null);
     setBoot("needCode");
   }, []);
+
+  const pushDrillDownToClient = useCallback(
+    (clientId: number, label: string) => {
+      const prevView = currentView;
+      const prevTarget = searchTarget;
+      const prevQuery = searchQuery;
+      nav.push({
+        restore: () => {
+          setCurrentView(prevView);
+          setSearchTarget(prevTarget);
+          setSearchQuery(prevQuery);
+        },
+      });
+      setCurrentView("clients");
+      setSearchTarget({ type: "client", id: clientId, label });
+      setSearchQuery(null);
+    },
+    [currentView, searchTarget, searchQuery, nav]
+  );
 
   if (appUpdate === "check") {
     return (
@@ -295,12 +345,24 @@ function App() {
     );
   }
 
+  if (standaloneWindow === "stats-conversations") {
+    if (!standaloneDay) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg-primary)] text-sm text-[var(--color-accent)] p-6 text-center">
+          Липсва валиден ден за прозореца с разговори.
+        </div>
+      );
+    }
+    return <DayConversationsWindow dayKey={standaloneDay} />;
+  }
+
   return (
     <Layout
       role={authRole}
       onLogout={handleLogout}
       currentView={currentView}
       onViewChange={(v: AppMainView) => {
+        nav.clear();
         setCurrentView(v);
         setSearchTarget(null);
         setSearchQuery(null);
@@ -308,12 +370,15 @@ function App() {
       onSearchSelect={handleSearchSelect}
       onSearchEnter={handleSearchEnter}
       reminderTodayCount={reminderTodayCount}
+      onMainRef={nav.registerScrollEl}
     >
       {searchQuery ? (
         <SearchResultsView
           query={searchQuery}
           onSelect={handleSearchSelect}
-          onBack={() => setSearchQuery(null)}
+          onBack={() => {
+            if (!nav.back()) setSearchQuery(null);
+          }}
           clientsOnly={authRole === "clients"}
         />
       ) : (
@@ -348,9 +413,7 @@ function App() {
           {currentView === "reminders" && (
             <RemindersView
               onOpenClient={(clientId, label) => {
-                setCurrentView("clients");
-                setSearchTarget({ type: "client", id: clientId, label });
-                setSearchQuery(null);
+                pushDrillDownToClient(clientId, label);
                 refreshReminderCount();
               }}
               onInvalidateTodayCount={refreshReminderCount}
@@ -359,9 +422,7 @@ function App() {
           {currentView === "ksb" && (
             <KsbRegisterView
               onOpenClient={(clientId, label) => {
-                setCurrentView("clients");
-                setSearchTarget({ type: "client", id: clientId, label });
-                setSearchQuery(null);
+                pushDrillDownToClient(clientId, label);
               }}
             />
           )}
@@ -381,6 +442,10 @@ function App() {
                 <KsbRegisterView
                   compact
                   onOpenClient={(clientId, label) => {
+                    const prevTarget = searchTarget;
+                    nav.push({
+                      restore: () => setSearchTarget(prevTarget),
+                    });
                     setSearchTarget({ type: "client", id: clientId, label });
                     setSearchQuery(null);
                   }}
@@ -388,11 +453,14 @@ function App() {
               </div>
             </div>
           )}
-          {currentView === "statistics" && <StatisticsView role={authRole} onOpenClient={(clientId, label) => {
-            setCurrentView("clients");
-            setSearchTarget({ type: "client", id: clientId, label });
-            setSearchQuery(null);
-          }} />}
+          {currentView === "statistics" && (
+            <StatisticsView
+              role={authRole}
+              onOpenClient={(clientId, label) => {
+                pushDrillDownToClient(clientId, label);
+              }}
+            />
+          )}
           {currentView === "settings" && authRole === "admin" && <SettingsView />}
         </>
       )}

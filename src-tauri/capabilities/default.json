@@ -4,7 +4,8 @@
   "description": "Capability for the main window and the standalone КСБ window",
   "windows": [
     "main",
-    "ksb"
+    "ksb",
+    "stats-conversations"
   ],
   "permissions": [
     "core:default",

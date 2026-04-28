@@ -1535,6 +1535,11 @@ export type StatisticsFetchResult = {
   daySummaries: StatisticsDayActorSummary[];
 };
 
+export type StatisticsDaySummariesResult = {
+  daySummaries: StatisticsDayActorSummary[];
+  dayKeys: string[];
+};
+
 function metaStr(m: Record<string, unknown> | null | undefined, key: string): string | null {
   const v = m?.[key];
   return typeof v === "string" ? v : null;
@@ -1545,6 +1550,32 @@ export type StatisticsActorFilter =
   | { scope: "all" }
   | { scope: "legacy" }
   | { scope: "staff"; staffUserId: number };
+
+export interface DayConversationRow {
+  id: number;
+  dayKey: string;
+  occurredAt: string;
+  clientId: number;
+  clientName: string;
+  clientCompany: string | null;
+  actorLabel: string;
+  actorInitials: string;
+  type: string;
+  notes: string | null;
+}
+
+function localDayRangeIso(dayKey: string): { fromIso: string; toIso: string } {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey);
+  if (!m) {
+    throw new Error("Невалиден ден.");
+  }
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const from = new Date(y, mo - 1, d, 0, 0, 0, 0);
+  const to = new Date(y, mo - 1, d + 1, 0, 0, 0, 0);
+  return { fromIso: from.toISOString(), toIso: to.toISOString() };
+}
 
 /** PostgREST връща 400 Bad Request при твърде дълъг URL — `.in("id", [...])` с хиляди id. */
 const STATS_IN_QUERY_CHUNK = 100;
@@ -1596,6 +1627,58 @@ async function fetchAllActivityEventsForStats(
       const iso = new Date(rxgCut).toISOString();
       q = q.or(`event_type.neq.client_created,and(event_type.eq.client_created,occurred_at.gte."${iso}")`);
     }
+    if (actorFilter?.scope === "legacy") {
+      q = q.is("actor_user_id", null);
+    } else if (actorFilter?.scope === "staff") {
+      q = q.eq("actor_user_id", actorFilter.staffUserId);
+    }
+    const { data, error } = await q.range(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const batch = data ?? [];
+    if (batch.length === 0) break;
+    all.push(...(batch as typeof all));
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
+async function fetchActivityEventsForStatsDay(
+  sb: ReturnType<typeof getSupabase>,
+  dayKey: string,
+  actorFilter?: StatisticsActorFilter
+): Promise<
+  {
+    id: number;
+    client_id: number | null;
+    occurred_at: string;
+    event_type: string;
+    ref_id: number | null;
+    metadata: Record<string, unknown> | null;
+    actor_user_id: number | null;
+  }[]
+> {
+  const comp = requireCompanyId();
+  const { fromIso, toIso } = localDayRangeIso(dayKey);
+  const pageSize = 1000;
+  const all: {
+    id: number;
+    client_id: number | null;
+    occurred_at: string;
+    event_type: string;
+    ref_id: number | null;
+    metadata: Record<string, unknown> | null;
+    actor_user_id: number | null;
+  }[] = [];
+  let from = 0;
+  for (;;) {
+    let q = sb
+      .from("client_activity_events")
+      .select("id, client_id, occurred_at, event_type, ref_id, metadata, actor_user_id")
+      .eq("company_id", comp)
+      .gte("occurred_at", fromIso)
+      .lt("occurred_at", toIso)
+      .order("id", { ascending: true });
     if (actorFilter?.scope === "legacy") {
       q = q.is("actor_user_id", null);
     } else if (actorFilter?.scope === "staff") {
@@ -2081,6 +2164,529 @@ export async function fetchStatisticsRows(actorFilter?: StatisticsActorFilter): 
     });
   }
   return { rows: out, daySummaries };
+}
+
+export async function fetchStatisticsDaySummaries(
+  actorFilter?: StatisticsActorFilter
+): Promise<StatisticsDaySummariesResult> {
+  const sb = getSupabase();
+  const orgLower = statsOrgCodeLower();
+  const rxgClientCreatedCutoffMs = orgLower === "rxg" ? startOfCurrentLocalHourMs() : null;
+  const eventsRaw = await fetchAllActivityEventsForStats(sb, actorFilter, { rxgClientCreatedCutoffMs });
+  type Ev = {
+    occurred_at: string;
+    event_type: string;
+    metadata: Record<string, unknown> | null;
+    actor_user_id: number | null;
+  };
+  const list = (eventsRaw as Ev[]).filter((e) => {
+    if (e.event_type !== "client_created") return true;
+    if (rxgClientCreatedCutoffMs == null) return true;
+    return new Date(e.occurred_at).getTime() >= rxgClientCreatedCutoffMs;
+  });
+  if (!list.length) return { daySummaries: [], dayKeys: [] };
+
+  const compC = requireCompanyId();
+  const actorIdsForLabels = [...new Set(list.map((e) => e.actor_user_id).filter((x): x is number => x != null))];
+  const staffById = new Map<number, { username: string; display_name: string | null }>();
+  if (actorIdsForLabels.length > 0) {
+    for (let i = 0; i < actorIdsForLabels.length; i += STATS_IN_QUERY_CHUNK) {
+      const slice = actorIdsForLabels.slice(i, i + STATS_IN_QUERY_CHUNK);
+      const { data: staffRows, error: sErr } = await sb
+        .from("staff_users")
+        .select("id, username, display_name")
+        .eq("company_id", compC)
+        .in("id", slice);
+      if (sErr) throw new Error(sErr.message);
+      for (const s of staffRows ?? []) {
+        const row = s as { id: number; username: string; display_name: string | null };
+        staffById.set(row.id, { username: row.username, display_name: row.display_name });
+      }
+    }
+  }
+
+  const eventActorKeyFromEv = (e: Ev): string => {
+    if (e.actor_user_id != null) return `s\t${e.actor_user_id}`;
+    const lab = metaStr(e.metadata, "admin_actor_label");
+    const ini = metaStr(e.metadata, "admin_actor_initials");
+    if (lab) return `a\tnamed\t${lab}\t${ini ?? ""}`;
+    return "a\tdef";
+  };
+  const labelInitialsForActorKey = (key: string): { label: string; initials: string } => {
+    const parts = key.split("\t");
+    if (parts[0] === "s" && parts[1]) {
+      const id = parseInt(parts[1], 10);
+      if (Number.isFinite(id)) {
+        const s = staffById.get(id);
+        if (!s) return { label: `Служител #${id}`, initials: String(id).slice(0, 2).toUpperCase() };
+        const label = s.display_name ? `${s.display_name} (${s.username})` : s.username;
+        const dn = s.display_name?.trim();
+        if (dn) {
+          const p = dn.split(/\s+/).filter(Boolean);
+          if (p.length >= 2) return { label, initials: `${p[0]![0]}${p[1]![0]}`.toUpperCase() };
+          if (p.length === 1) return { label, initials: p[0]!.slice(0, 2).toUpperCase() };
+        }
+        return { label, initials: s.username.slice(0, 2).toUpperCase() };
+      }
+    }
+    if (parts[0] === "a" && parts[1] === "def") return { label: "Админ / без акаунт", initials: "АД" };
+    if (parts[0] === "a" && parts[1] === "named" && parts[2]) {
+      const label = parts[2]!;
+      const ini = (parts[3] ?? "").trim();
+      return { label, initials: ini || initialsFromFullName(label) };
+    }
+    return { label: "?", initials: "?" };
+  };
+
+  type DayAcc = {
+    dayKey: string;
+    actorKey: string;
+    newClients: number;
+    contacts: number;
+    conversations: number;
+    meetings: number;
+    orders: number;
+    deletions: number;
+  };
+  const dayAcc = new Map<string, DayAcc>();
+  for (const e of list) {
+    const dk = localDayKeyFromIso(e.occurred_at);
+    const ak = eventActorKeyFromEv(e);
+    const key = `${dk}\t${ak}`;
+    let a = dayAcc.get(key);
+    if (!a) {
+      a = { dayKey: dk, actorKey: ak, newClients: 0, contacts: 0, conversations: 0, meetings: 0, orders: 0, deletions: 0 };
+      dayAcc.set(key, a);
+    }
+    switch (e.event_type) {
+      case "client_created": a.newClients++; break;
+      case "contact": a.contacts++; break;
+      case "conversation": a.conversations++; break;
+      case "meeting": a.meetings++; break;
+      case "order": a.orders++; break;
+      case "conversation_deleted":
+      case "meeting_deleted":
+      case "order_deleted":
+      case "client_deleted":
+        a.deletions++;
+        break;
+      default:
+        break;
+    }
+  }
+  const daySummaries: StatisticsDayActorSummary[] = [...dayAcc.values()]
+    .map((a) => {
+      const li = labelInitialsForActorKey(a.actorKey);
+      return { dayKey: a.dayKey, actorKey: a.actorKey, actorLabel: li.label, actorInitials: li.initials, newClients: a.newClients, contacts: a.contacts, conversations: a.conversations, meetings: a.meetings, orders: a.orders, deletions: a.deletions };
+    })
+    .filter((s) => s.newClients + s.contacts + s.conversations + s.meetings + s.orders + s.deletions > 0)
+    .sort((x, y) => (x.dayKey !== y.dayKey ? y.dayKey.localeCompare(x.dayKey) : x.actorLabel.localeCompare(y.actorLabel, "bg")));
+  const dayKeys = [...new Set(daySummaries.map((s) => s.dayKey))];
+  return { daySummaries, dayKeys };
+}
+
+export async function fetchDayConversations(
+  dayKey: string,
+  actorFilter?: StatisticsActorFilter
+): Promise<DayConversationRow[]> {
+  const sb = getSupabase();
+  const comp = requireCompanyId();
+  const events = await fetchActivityEventsForStatsDay(sb, dayKey, actorFilter);
+  const conversationEvents = events.filter(
+    (e) => e.event_type === "conversation" && e.ref_id != null
+  );
+  if (!conversationEvents.length) return [];
+
+  const actorIds = [
+    ...new Set(
+      conversationEvents
+        .map((e) => e.actor_user_id)
+        .filter((x): x is number => x != null)
+    ),
+  ];
+  const staffById = new Map<number, { username: string; display_name: string | null }>();
+  if (actorIds.length > 0) {
+    for (let i = 0; i < actorIds.length; i += STATS_IN_QUERY_CHUNK) {
+      const slice = actorIds.slice(i, i + STATS_IN_QUERY_CHUNK);
+      const { data: staffRows, error: sErr } = await sb
+        .from("staff_users")
+        .select("id, username, display_name")
+        .eq("company_id", comp)
+        .in("id", slice);
+      if (sErr) throw new Error(sErr.message);
+      for (const s of staffRows ?? []) {
+        const row = s as { id: number; username: string; display_name: string | null };
+        staffById.set(row.id, { username: row.username, display_name: row.display_name });
+      }
+    }
+  }
+
+  const actorLabel = (actorId: number | null, metadata: Record<string, unknown> | null): string => {
+    if (actorId == null) {
+      const named = metaStr(metadata, "admin_actor_label");
+      return named ?? "Админ / без акаунт";
+    }
+    const s = staffById.get(actorId);
+    if (!s) return `Служител #${actorId}`;
+    return s.display_name ? `${s.display_name} (${s.username})` : s.username;
+  };
+  const actorInitials = (actorId: number | null, metadata: Record<string, unknown> | null): string => {
+    if (actorId == null) {
+      const ini = metaStr(metadata, "admin_actor_initials");
+      return ini?.trim() || "АД";
+    }
+    const s = staffById.get(actorId);
+    if (!s) {
+      const idStr = String(actorId);
+      return idStr.length >= 2 ? idStr.slice(0, 2).toUpperCase() : `${idStr}?`.toUpperCase();
+    }
+    const dn = s.display_name?.trim();
+    if (dn) {
+      const parts = dn.split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) return `${parts[0]![0]}${parts[1]![0]}`.toUpperCase();
+      if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
+    }
+    return s.username.slice(0, 2).toUpperCase();
+  };
+
+  const convIds = [...new Set(conversationEvents.map((e) => e.ref_id as number))];
+  const convMap = new Map<number, { id: number; client_id: number; type: string; notes: string | null }>();
+  for (let i = 0; i < convIds.length; i += STATS_IN_QUERY_CHUNK) {
+    const slice = convIds.slice(i, i + STATS_IN_QUERY_CHUNK);
+    const { data: convRows, error: cErr } = await sb
+      .from("client_conversations")
+      .select("id, client_id, type, notes")
+      .eq("company_id", comp)
+      .in("id", slice);
+    if (cErr) throw new Error(cErr.message);
+    for (const c of convRows ?? []) {
+      const row = c as { id: number; client_id: number; type: string; notes: string | null };
+      convMap.set(row.id, row);
+    }
+  }
+
+  const clientIds = [
+    ...new Set(
+      conversationEvents
+        .map((e) => e.client_id)
+        .filter((x): x is number => x != null)
+    ),
+  ];
+  const clientMap = new Map<number, { name: string; company: string | null }>();
+  if (clientIds.length > 0) {
+    for (let i = 0; i < clientIds.length; i += STATS_IN_QUERY_CHUNK) {
+      const slice = clientIds.slice(i, i + STATS_IN_QUERY_CHUNK);
+      const { data: cRows, error: clErr } = await sb
+        .from("clients")
+        .select("id, name, company")
+        .eq("company_id", comp)
+        .in("id", slice);
+      if (clErr) throw new Error(clErr.message);
+      for (const c of cRows ?? []) {
+        const row = c as { id: number; name: string; company: string | null };
+        clientMap.set(row.id, { name: row.name, company: row.company });
+      }
+    }
+  }
+
+  const out: DayConversationRow[] = [];
+  for (const ev of conversationEvents) {
+    const conv = convMap.get(ev.ref_id as number);
+    if (!conv) continue;
+    const cl =
+      clientMap.get(conv.client_id) ??
+      clientMap.get(ev.client_id ?? -1) ?? { name: metaStr(ev.metadata, "client_name") ?? `#${conv.client_id}`, company: null };
+    out.push({
+      id: conv.id,
+      dayKey,
+      occurredAt: ev.occurred_at,
+      clientId: conv.client_id,
+      clientName: cl.name,
+      clientCompany: cl.company,
+      actorLabel: actorLabel(ev.actor_user_id, ev.metadata),
+      actorInitials: actorInitials(ev.actor_user_id, ev.metadata),
+      type: conv.type,
+      notes: conv.notes ?? null,
+    });
+  }
+  out.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+  return out;
+}
+
+export async function fetchStatisticsRowsForDay(
+  dayKey: string,
+  actorFilter?: StatisticsActorFilter
+): Promise<StatisticAggregatedRow[]> {
+  const sb = getSupabase();
+  const compC = requireCompanyId();
+  const eventsRaw = await fetchActivityEventsForStatsDay(sb, dayKey, actorFilter);
+  type Ev = {
+    id: number;
+    client_id: number | null;
+    occurred_at: string;
+    event_type: string;
+    ref_id: number | null;
+    metadata: Record<string, unknown> | null;
+    actor_user_id: number | null;
+  };
+  const list = eventsRaw as Ev[];
+  if (!list.length) return [];
+
+  const actorIdsForLabels = [...new Set(list.map((e) => e.actor_user_id).filter((x): x is number => x != null))];
+  const staffById = new Map<number, { username: string; display_name: string | null }>();
+  if (actorIdsForLabels.length > 0) {
+    for (let i = 0; i < actorIdsForLabels.length; i += STATS_IN_QUERY_CHUNK) {
+      const slice = actorIdsForLabels.slice(i, i + STATS_IN_QUERY_CHUNK);
+      const { data: staffRows, error: sErr } = await sb
+        .from("staff_users")
+        .select("id, username, display_name")
+        .eq("company_id", compC)
+        .in("id", slice);
+      if (sErr) throw new Error(sErr.message);
+      for (const s of staffRows ?? []) {
+        const row = s as { id: number; username: string; display_name: string | null };
+        staffById.set(row.id, { username: row.username, display_name: row.display_name });
+      }
+    }
+  }
+
+  const eventActorKeyFromEv = (e: Ev): string => {
+    if (e.actor_user_id != null) return `s\t${e.actor_user_id}`;
+    const lab = metaStr(e.metadata, "admin_actor_label");
+    const ini = metaStr(e.metadata, "admin_actor_initials");
+    if (lab) return `a\tnamed\t${lab}\t${ini ?? ""}`;
+    return "a\tdef";
+  };
+  const labelInitialsForActorKey = (key: string): { label: string; initials: string } => {
+    const parts = key.split("\t");
+    if (parts[0] === "s" && parts[1]) {
+      const id = parseInt(parts[1], 10);
+      if (Number.isFinite(id)) {
+        const s = staffById.get(id);
+        const label = s ? (s.display_name ? `${s.display_name} (${s.username})` : s.username) : `Служител #${id}`;
+        if (!s) return { label, initials: String(id).slice(0, 2).toUpperCase() };
+        const dn = s.display_name?.trim();
+        if (dn) {
+          const p = dn.split(/\s+/).filter(Boolean);
+          if (p.length >= 2) return { label, initials: `${p[0]![0]}${p[1]![0]}`.toUpperCase() };
+          if (p.length === 1) return { label, initials: p[0]!.slice(0, 2).toUpperCase() };
+        }
+        return { label, initials: s.username.slice(0, 2).toUpperCase() };
+      }
+    }
+    if (parts[0] === "a" && parts[1] === "def") return { label: "Админ / без акаунт", initials: "АД" };
+    if (parts[0] === "a" && parts[1] === "named" && parts[2]) {
+      const label = parts[2]!;
+      const ini = (parts[3] ?? "").trim();
+      return { label, initials: ini || initialsFromFullName(label) };
+    }
+    return { label: "?", initials: "?" };
+  };
+
+  const clientIds = [...new Set(list.map((e) => e.client_id).filter((x): x is number => x != null))];
+  const clientMap = new Map<number, { name: string; company: string | null }>();
+  if (clientIds.length > 0) {
+    for (let i = 0; i < clientIds.length; i += STATS_IN_QUERY_CHUNK) {
+      const slice = clientIds.slice(i, i + STATS_IN_QUERY_CHUNK);
+      const { data: clientRows, error: cErr } = await sb
+        .from("clients")
+        .select("id, name, company")
+        .eq("company_id", compC)
+        .in("id", slice);
+      if (cErr) throw new Error(cErr.message);
+      for (const c of clientRows ?? []) {
+        const row = c as { id: number; name: string; company: string | null };
+        clientMap.set(row.id, { name: row.name, company: row.company });
+      }
+    }
+  }
+
+  const meetingIds = new Set<number>();
+  const orderIds = new Set<number>();
+  const conversationIds = new Set<number>();
+  for (const e of list) {
+    if (e.event_type === "meeting" && e.ref_id != null) meetingIds.add(e.ref_id);
+    if (e.event_type === "order" && e.ref_id != null) orderIds.add(e.ref_id);
+    if (e.event_type === "conversation" && e.ref_id != null) conversationIds.add(e.ref_id);
+  }
+
+  const meetingDetailMap = new Map<number, { id: number; scheduled_at: string; outcome_notes: string | null; meeting_address: string | null; contact_person: string | null; phone: string | null }>();
+  if (meetingIds.size > 0) {
+    const mids = [...meetingIds];
+    for (let i = 0; i < mids.length; i += STATS_IN_QUERY_CHUNK) {
+      const slice = mids.slice(i, i + STATS_IN_QUERY_CHUNK);
+      const { data: mrows, error: mErr } = await sb
+        .from("client_meetings")
+        .select("id, scheduled_at, outcome_notes, meeting_address, contact_person, phone")
+        .eq("company_id", compC)
+        .in("id", slice);
+      if (mErr) throw new Error(mErr.message);
+      for (const m of mrows ?? []) {
+        const row = m as { id: number; scheduled_at: string; outcome_notes: string | null; meeting_address: string | null; contact_person: string | null; phone: string | null };
+        meetingDetailMap.set(row.id, row);
+      }
+    }
+  }
+
+  const conversationNotesMap = new Map<number, string>();
+  if (conversationIds.size > 0) {
+    const cids = [...conversationIds];
+    for (let i = 0; i < cids.length; i += STATS_IN_QUERY_CHUNK) {
+      const slice = cids.slice(i, i + STATS_IN_QUERY_CHUNK);
+      const { data: crows, error: convErr } = await sb
+        .from("client_conversations")
+        .select("id, notes")
+        .eq("company_id", compC)
+        .in("id", slice);
+      if (convErr) throw new Error(convErr.message);
+      for (const c of crows ?? []) {
+        const row = c as { id: number; notes: string | null };
+        conversationNotesMap.set(row.id, row.notes ?? "");
+      }
+    }
+  }
+
+  const orderMap = new Map<number, { description: string | null; amount: number | null; documents: string | null }>();
+  if (orderIds.size > 0) {
+    const oids = [...orderIds];
+    for (let i = 0; i < oids.length; i += STATS_IN_QUERY_CHUNK) {
+      const slice = oids.slice(i, i + STATS_IN_QUERY_CHUNK);
+      const { data: orows, error: oErr } = await sb
+        .from("client_orders")
+        .select("id, description, amount, documents")
+        .eq("company_id", compC)
+        .in("id", slice);
+      if (oErr) throw new Error(oErr.message);
+      for (const o of orows ?? []) {
+        const row = o as { id: number; description: string | null; amount: number | null; documents: string | null };
+        orderMap.set(row.id, { description: row.description, amount: row.amount, documents: row.documents });
+      }
+    }
+  }
+
+  const now = Date.now();
+  type G = {
+    dayKey: string;
+    clientId: number;
+    clientName: string;
+    company: string | null;
+    clientCreated: boolean;
+    hasContact: boolean;
+    conversationCount: number;
+    meetingIdSet: Set<number>;
+    orderSnapshots: { description: string | null; amount: number | null }[];
+    deletionLabels: string[];
+    lastOccurredAt: string;
+    searchTextParts: string[];
+    actorKeySet: Set<string>;
+  };
+  const groups = new Map<string, G>();
+
+  const resolveClientLabel = (e: Ev): { name: string; company: string | null } => {
+    const cid = e.client_id;
+    const m = e.metadata ?? {};
+    if (cid != null && clientMap.has(cid)) return clientMap.get(cid)!;
+    if (cid != null) return { name: metaStr(m, "client_name") ?? `#${cid}`, company: (m.company as string) ?? null };
+    return { name: metaStr(m, "client_name") ?? "?", company: (m.company as string) ?? null };
+  };
+
+  for (const e of list) {
+    const dk = localDayKeyFromIso(e.occurred_at);
+    const { name: rName, company: rCompany } = resolveClientLabel(e);
+    const key = `${dk}|${e.client_id ?? `orphan-${e.id}`}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        dayKey: dk,
+        clientId: e.client_id ?? -1,
+        clientName: rName,
+        company: rCompany,
+        clientCreated: false,
+        hasContact: false,
+        conversationCount: 0,
+        meetingIdSet: new Set(),
+        orderSnapshots: [],
+        deletionLabels: [],
+        lastOccurredAt: e.occurred_at,
+        searchTextParts: [],
+        actorKeySet: new Set(),
+      };
+      groups.set(key, g);
+    }
+    if (e.occurred_at > g.lastOccurredAt) g.lastOccurredAt = e.occurred_at;
+    g.actorKeySet.add(eventActorKeyFromEv(e));
+    switch (e.event_type) {
+      case "client_created":
+        g.clientCreated = true;
+        break;
+      case "contact":
+        g.hasContact = true;
+        break;
+      case "conversation":
+        g.conversationCount++;
+        if (e.ref_id != null) {
+          const note = conversationNotesMap.get(e.ref_id);
+          if (note) g.searchTextParts.push(note);
+        }
+        break;
+      case "meeting":
+        if (e.ref_id != null) g.meetingIdSet.add(e.ref_id);
+        break;
+      case "order":
+        if (e.ref_id != null && orderMap.has(e.ref_id)) {
+          const o = orderMap.get(e.ref_id)!;
+          g.orderSnapshots.push({ description: o.description, amount: o.amount });
+          g.searchTextParts.push(`${o.description ?? ""} ${o.documents ?? ""}`.trim());
+        }
+        break;
+      case "conversation_deleted":
+      case "meeting_deleted":
+      case "order_deleted":
+      case "client_deleted":
+        g.deletionLabels.push(e.event_type.replace("_", " "));
+        break;
+      default:
+        break;
+    }
+  }
+
+  const rows: StatisticAggregatedRow[] = [...groups.values()].map((g) => {
+    const meetings = [...g.meetingIdSet]
+      .map((id) => {
+        const m = meetingDetailMap.get(id);
+        if (!m) return null;
+        const ts = new Date(m.scheduled_at).getTime();
+        return { id: m.id, scheduledAt: m.scheduled_at, isUpcoming: Number.isFinite(ts) ? ts > now : false };
+      })
+      .filter((x): x is { id: number; scheduledAt: string; isUpcoming: boolean } => x != null)
+      .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
+    const actorPairs = [...g.actorKeySet].map(labelInitialsForActorKey);
+    return {
+      dayKey: g.dayKey,
+      clientId: g.clientId,
+      clientName: g.clientName,
+      company: g.company,
+      clientExists: g.clientId > 0 && clientMap.has(g.clientId),
+      clientCreated: g.clientCreated,
+      hasContact: g.hasContact,
+      conversationCount: g.conversationCount,
+      meetings,
+      orders: g.orderSnapshots,
+      deletionLabels: g.deletionLabels,
+      lastOccurredAt: g.lastOccurredAt,
+      searchText: g.searchTextParts.join(" "),
+      actorLabels: actorPairs.map((x) => x.label),
+      actorInitials: actorPairs.map((x) => x.initials),
+    };
+  });
+
+  rows.sort((a, b) => {
+    const ta = new Date(a.lastOccurredAt).getTime();
+    const tb = new Date(b.lastOccurredAt).getTime();
+    if (tb !== ta) return tb - ta;
+    return a.clientName.localeCompare(b.clientName, "bg");
+  });
+  return rows;
 }
 
 function formatMeetingShort(iso: string): string {
