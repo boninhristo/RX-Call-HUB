@@ -12,6 +12,7 @@ import { DayConversationsWindow } from "./components/Statistics/DayConversations
 import { SettingsView } from "./components/Settings/SettingsView";
 import { RemindersView } from "./components/Reminders/RemindersView";
 import { KsbRegisterView } from "./components/Ksb/KsbRegisterView";
+import { TodoView } from "./components/Todo/TodoView";
 import type { AppMainView } from "./components/Layout/Sidebar";
 import { clearStoredRole, getStoredRole, setStoredRole, type LoginSuccessPayload } from "./lib/auth";
 import { lookupCompanyByCode } from "./lib/companyAccess";
@@ -24,7 +25,8 @@ import {
   setCompanyContext,
   setStaffUserSession,
 } from "./lib/session";
-import { countTodayPendingReminders, type SearchResult } from "./lib/db";
+import { countPersonalTodosDueOrOverdue, countTodayPendingReminders, type SearchResult } from "./lib/db";
+import { getCurrentTodoOwner } from "./lib/todoOwner";
 import { checkForAppUpdate, type AppUpdateInfo } from "./lib/updater";
 import { UpdateInProgressScreen } from "./components/Update/UpdateInProgressScreen";
 import {
@@ -53,6 +55,7 @@ function AppContent() {
   const [searchTarget, setSearchTarget] = useState<SearchResult | null>(null);
   const [searchQuery, setSearchQuery] = useState<string | null>(null);
   const [reminderTodayCount, setReminderTodayCount] = useState(0);
+  const [todoDueCount, setTodoDueCount] = useState(0);
   const standaloneWindow = readStandaloneWindowParam();
   const standaloneDay = readStandaloneDayParam();
 
@@ -61,6 +64,21 @@ function AppContent() {
     countTodayPendingReminders()
       .then(setReminderTodayCount)
       .catch(() => setReminderTodayCount(0));
+  }, [authRole]);
+
+  const refreshTodoCount = useCallback(() => {
+    if (authRole == null) {
+      setTodoDueCount(0);
+      return;
+    }
+    const owner = getCurrentTodoOwner();
+    if (!owner) {
+      setTodoDueCount(0);
+      return;
+    }
+    countPersonalTodosDueOrOverdue({ kind: owner.kind, key: owner.key })
+      .then(setTodoDueCount)
+      .catch(() => setTodoDueCount(0));
   }, [authRole]);
 
   useEffect(() => {
@@ -118,7 +136,8 @@ function AppContent() {
       currentView !== "statistics" &&
       currentView !== "reminders" &&
       currentView !== "ksb" &&
-      currentView !== "split"
+      currentView !== "split" &&
+      currentView !== "todo"
     ) {
       setCurrentView("clients");
       setSearchTarget(null);
@@ -142,6 +161,18 @@ function AppContent() {
       window.removeEventListener("klienti-reminders-changed", onRem);
     };
   }, [authRole, currentView, refreshReminderCount]);
+
+  useEffect(() => {
+    if (authRole == null) {
+      setTodoDueCount(0);
+      return;
+    }
+    refreshTodoCount();
+    const t = window.setInterval(refreshTodoCount, 60_000);
+    return () => {
+      window.clearInterval(t);
+    };
+  }, [authRole, currentView, refreshTodoCount]);
 
   useEffect(() => {
     if (standaloneWindow != null) return;
@@ -370,6 +401,7 @@ function AppContent() {
       onSearchSelect={handleSearchSelect}
       onSearchEnter={handleSearchEnter}
       reminderTodayCount={reminderTodayCount}
+      todoDueCount={todoDueCount}
       onMainRef={nav.registerScrollEl}
     >
       {searchQuery ? (
@@ -462,6 +494,7 @@ function AppContent() {
             />
           )}
           {currentView === "settings" && authRole === "admin" && <SettingsView />}
+          {currentView === "todo" && <TodoView onChanged={refreshTodoCount} />}
         </>
       )}
     </Layout>

@@ -2,7 +2,7 @@ import type { AppRole } from "../../lib/auth";
 
 type MainView = "clients" | "suppliers" | "transport" | "competition" | "reminders" | "ksb" | "split";
 
-export type AppMainView = MainView | "statistics" | "settings";
+export type AppMainView = MainView | "statistics" | "settings" | "todo";
 
 interface SidebarProps {
   currentView: AppMainView;
@@ -10,6 +10,8 @@ interface SidebarProps {
   role: AppRole;
   /** Незавършени напомняния за локалния днес (брояч върху REMINDERS). */
   reminderTodayCount?: number;
+  /** Просрочени или днешни задачи в личния TO DO list (за бадж). */
+  todoDueCount?: number;
 }
 
 const mainNav: { id: Exclude<MainView, "reminders">; label: string }[] = [
@@ -19,7 +21,13 @@ const mainNav: { id: Exclude<MainView, "reminders">; label: string }[] = [
   { id: "competition", label: "Competition" },
 ];
 
-export function Sidebar({ currentView, onViewChange, role, reminderTodayCount = 0 }: SidebarProps) {
+export function Sidebar({
+  currentView,
+  onViewChange,
+  role,
+  reminderTodayCount = 0,
+  todoDueCount = 0,
+}: SidebarProps) {
   const items: { id: MainView; label: string }[] =
     role === "clients"
       ? [
@@ -76,6 +84,27 @@ export function Sidebar({ currentView, onViewChange, role, reminderTodayCount = 
             Настройки
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => onViewChange("todo")}
+          className={`relative w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+            currentView === "todo"
+              ? "bg-[var(--color-bg-card)] text-[var(--color-text-bright)]"
+              : "text-[var(--color-accent)] hover:bg-[var(--color-bg-card)]/50 hover:text-[var(--color-text)]"
+          }`}
+        >
+          <span className="inline-flex items-center gap-2 pr-6">
+            TO DO
+            {todoDueCount > 0 && (
+              <span
+                className="absolute right-2 top-1/2 -translate-y-1/2 min-w-[1.25rem] h-5 px-1 flex items-center justify-center rounded-full bg-amber-500/90 text-[10px] font-bold text-[var(--color-bg-primary)] tabular-nums"
+                title={`Просрочени или днешни задачи: ${todoDueCount}`}
+              >
+                {todoDueCount > 99 ? "99+" : todoDueCount}
+              </span>
+            )}
+          </span>
+        </button>
         <button
           type="button"
           onClick={() => onViewChange("statistics")}

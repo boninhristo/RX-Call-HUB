@@ -3809,6 +3809,231 @@ export async function deleteStaffUser(id: number): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// =============================================================================
+// Personal TO DO list (per-account, изолиран в рамките на фирма).
+// =============================================================================
+
+export type PersonalTodoOwnerKind = "staff" | "admin_main" | "admin_named";
+export type PersonalTodoRecurrence = "none" | "daily" | "weekly" | "monthly";
+
+export interface PersonalTodo {
+  id: number;
+  company_id: number;
+  owner_kind: PersonalTodoOwnerKind;
+  owner_key: string;
+  note: string;
+  due_at: string | null;
+  recurrence: PersonalTodoRecurrence;
+  done: boolean;
+  done_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PersonalTodoOwnerRef {
+  kind: PersonalTodoOwnerKind;
+  key: string;
+}
+
+function applyTodoOwner<T>(q: T, owner: PersonalTodoOwnerRef): T {
+  return (q as any).eq("owner_kind", owner.kind).eq("owner_key", owner.key);
+}
+
+/**
+ * Връща задачите за текущия owner. Сортирани:
+ *   1) с due_at ASC (просрочени най-горе);
+ *   2) без due_at — created_at DESC.
+ * `includeDone=false` (по подразбиране) скрива завършените.
+ */
+export async function listPersonalTodos(
+  owner: PersonalTodoOwnerRef,
+  includeDone = false
+): Promise<PersonalTodo[]> {
+  const sb = getSupabase();
+  const c = requireCompanyId();
+  let q = sb
+    .from("personal_todos")
+    .select("*")
+    .eq("company_id", c);
+  q = applyTodoOwner(q, owner);
+  if (!includeDone) q = q.eq("done", false);
+  q = q.order("due_at", { ascending: true, nullsFirst: false }).order("created_at", { ascending: false });
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return (data ?? []) as PersonalTodo[];
+}
+
+/** Брой незавършени задачи с due_at <= край на днешния ден (за sidebar badge). */
+export async function countPersonalTodosDueOrOverdue(owner: PersonalTodoOwnerRef): Promise<number> {
+  const sb = getSupabase();
+  const c = requireCompanyId();
+  const { endIso } = localDayRangeUtcIso();
+  let q = sb
+    .from("personal_todos")
+    .select("*", { count: "exact", head: true })
+    .eq("company_id", c)
+    .eq("done", false)
+    .not("due_at", "is", null)
+    .lt("due_at", endIso);
+  q = applyTodoOwner(q, owner);
+  const { count, error } = await q;
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
+export interface PersonalTodoCreateInput {
+  owner: PersonalTodoOwnerRef;
+  note: string;
+  /** ISO или datetime-local; null/undefined = без падеж. */
+  dueAt?: string | null;
+  recurrence?: PersonalTodoRecurrence;
+}
+
+function normalizeDueAtInput(input?: string | null): string | null {
+  if (input == null) return null;
+  const t = input.trim();
+  if (!t) return null;
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) throw new Error("Невалидна дата/час за падеж.");
+  return d.toISOString();
+}
+
+export async function createPersonalTodo(params: PersonalTodoCreateInput): Promise<number> {
+  const note = (params.note ?? "").trim();
+  if (!note) throw new Error("Бележката не може да е празна.");
+  const recurrence = params.recurrence ?? "none";
+  const dueAt = normalizeDueAtInput(params.dueAt);
+  const sb = getSupabase();
+  const c = requireCompanyId();
+  const { data, error } = await sb
+    .from("personal_todos")
+    .insert({
+      company_id: c,
+      owner_kind: params.owner.kind,
+      owner_key: params.owner.key,
+      note,
+      due_at: dueAt,
+      recurrence,
+      done: false,
+      done_at: null,
+    })
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+  return data!.id as number;
+}
+
+export interface PersonalTodoUpdateInput {
+  note?: string;
+  dueAt?: string | null;
+  recurrence?: PersonalTodoRecurrence;
+}
+
+export async function updatePersonalTodo(
+  id: number,
+  owner: PersonalTodoOwnerRef,
+  patch: PersonalTodoUpdateInput
+): Promise<void> {
+  const sb = getSupabase();
+  const c = requireCompanyId();
+  const update: Record<string, unknown> = { updated_at: nowIso() };
+  if (patch.note !== undefined) {
+    const note = patch.note.trim();
+    if (!note) throw new Error("Бележката не може да е празна.");
+    update.note = note;
+  }
+  if (patch.dueAt !== undefined) {
+    update.due_at = normalizeDueAtInput(patch.dueAt);
+  }
+  if (patch.recurrence !== undefined) {
+    update.recurrence = patch.recurrence;
+  }
+  let q = sb.from("personal_todos").update(update).eq("id", id).eq("company_id", c);
+  q = applyTodoOwner(q, owner);
+  const { error } = await q;
+  if (error) throw new Error(error.message);
+}
+
+export async function deletePersonalTodo(id: number, owner: PersonalTodoOwnerRef): Promise<void> {
+  const sb = getSupabase();
+  const c = requireCompanyId();
+  let q = sb.from("personal_todos").delete().eq("id", id).eq("company_id", c);
+  q = applyTodoOwner(q, owner);
+  const { error } = await q;
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * „Преместване напред“ за recurring задача — от due_at добавя интервала. Ако due_at
+ * е минал, продължава да добавя интервала, докато не е >= now (така няма да остане
+ * просрочено след отметка).
+ */
+function advanceRecurringDueAt(currentDue: Date, recurrence: PersonalTodoRecurrence): Date {
+  const next = new Date(currentDue.getTime());
+  const advance = () => {
+    switch (recurrence) {
+      case "daily":
+        next.setDate(next.getDate() + 1);
+        break;
+      case "weekly":
+        next.setDate(next.getDate() + 7);
+        break;
+      case "monthly":
+        next.setMonth(next.getMonth() + 1);
+        break;
+      default:
+        break;
+    }
+  };
+  advance();
+  const nowMs = Date.now();
+  let safety = 0;
+  while (next.getTime() < nowMs && safety < 1000) {
+    advance();
+    safety += 1;
+    if (recurrence === "none") break;
+  }
+  return next;
+}
+
+/**
+ * Превключва статуса на задача:
+ *   - non-recurring: flip `done`, set/clear `done_at`.
+ *   - recurring + due_at: ако преминава от не-готова → готова, се „търкаля“ due_at напред
+ *     с интервала и `done` остава `false`. (Завършваме, като я изтрием или сменим
+ *     recurrence-а на 'none'.)
+ */
+export async function togglePersonalTodoDone(
+  id: number,
+  owner: PersonalTodoOwnerRef
+): Promise<void> {
+  const sb = getSupabase();
+  const c = requireCompanyId();
+  let qSel = sb.from("personal_todos").select("*").eq("id", id).eq("company_id", c);
+  qSel = applyTodoOwner(qSel, owner);
+  const { data, error } = await qSel.maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Задачата не е намерена.");
+  const row = data as PersonalTodo;
+
+  const update: Record<string, unknown> = { updated_at: nowIso() };
+  if (!row.done && row.recurrence !== "none" && row.due_at) {
+    const next = advanceRecurringDueAt(new Date(row.due_at), row.recurrence);
+    update.due_at = next.toISOString();
+    update.done = false;
+    update.done_at = null;
+  } else {
+    const nextDone = !row.done;
+    update.done = nextDone;
+    update.done_at = nextDone ? nowIso() : null;
+  }
+
+  let qUpd = sb.from("personal_todos").update(update).eq("id", id).eq("company_id", c);
+  qUpd = applyTodoOwner(qUpd, owner);
+  const { error: uErr } = await qUpd;
+  if (uErr) throw new Error(uErr.message);
+}
+
 /** JSON snapshot of all tables (for local backup file). */
 export async function exportDatabaseSnapshot(): Promise<string> {
   const sb = getSupabase();

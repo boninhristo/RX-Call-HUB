@@ -12,6 +12,7 @@ interface LayoutProps {
   onSearchSelect?: (result: SearchResult) => void;
   onSearchEnter?: (query: string) => void;
   reminderTodayCount?: number;
+  todoDueCount?: number;
   onMainRef?: (el: HTMLElement | null) => void;
   children: React.ReactNode;
 }
@@ -24,6 +25,7 @@ export function Layout({
   onSearchSelect,
   onSearchEnter,
   reminderTodayCount = 0,
+  todoDueCount = 0,
   onMainRef,
   children,
 }: LayoutProps) {
@@ -45,6 +47,7 @@ export function Layout({
           currentView={currentView}
           onViewChange={onViewChange}
           reminderTodayCount={reminderTodayCount}
+          todoDueCount={todoDueCount}
         />
         <main ref={mainRef} className="flex-1 overflow-auto p-4 min-h-0">{children}</main>
       </div>
