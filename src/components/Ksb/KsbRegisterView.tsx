@@ -755,7 +755,7 @@ export function KsbRegisterView({ onOpenClient, compact = false }: KsbRegisterVi
                                       </ul>
                                     )}
                                   </div>
-                                  <div className="rounded-lg border border-[var(--color-bg-card)] p-2 space-y-2">
+                                  <div className="conversation-panel rounded-lg p-2 space-y-2">
                                     <p className="text-[var(--color-text-bright)] text-sm">
                                       Разговор (по избор)
                                     </p>
@@ -768,7 +768,7 @@ export function KsbRegisterView({ onOpenClient, compact = false }: KsbRegisterVi
                                             type: e.target.value as "phone" | "in_person",
                                           }))
                                         }
-                                        className="px-3 py-2 rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-bg-card)] text-sm text-[var(--color-text)]"
+                                        className="conversation-field px-3 py-2 rounded-lg text-sm text-[var(--color-text)]"
                                       >
                                         <option value="phone">Телефон</option>
                                         <option value="in_person">На място</option>
@@ -779,7 +779,7 @@ export function KsbRegisterView({ onOpenClient, compact = false }: KsbRegisterVi
                                         onChange={(e) =>
                                           setConvDraft((d) => ({ ...d, date: e.target.value }))
                                         }
-                                        className="px-3 py-2 rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-bg-card)] text-sm text-[var(--color-text)]"
+                                        className="conversation-field px-3 py-2 rounded-lg text-sm text-[var(--color-text)]"
                                       />
                                     </div>
                                     <textarea
@@ -789,7 +789,7 @@ export function KsbRegisterView({ onOpenClient, compact = false }: KsbRegisterVi
                                       }
                                       rows={4}
                                       placeholder="Какво се обсъди…"
-                                      className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-bg-card)] text-[11px] leading-relaxed text-[var(--color-text)] placeholder:text-[var(--color-accent)]/60 resize-y"
+                                      className="conversation-field w-full px-3 py-2 rounded-lg text-[11px] leading-relaxed text-[var(--color-text)] placeholder:text-[var(--color-accent)]/60 resize-y"
                                     />
                                     <p className="text-[10px] text-[var(--color-accent)] leading-snug">
                                       Ако е попълнен: при „Добави в клиенти“ записва разговора и маркира клиента „в контакт“. Ако е празен — само добавя клиента.

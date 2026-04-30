@@ -1,9 +1,18 @@
 import { useState } from "react";
 import type { Client } from "../../lib/db";
 
+export interface NewClientConversationDraft {
+  type: "phone" | "in_person";
+  date: string;
+  notes: string;
+}
+
 interface ClientFormProps {
   client?: Client | null;
-  onSubmit: (data: Omit<Client, "id" | "created_at" | "updated_at">) => void;
+  onSubmit: (
+    data: Omit<Client, "id" | "created_at" | "updated_at">,
+    conversation?: NewClientConversationDraft
+  ) => void;
   onCancel: () => void;
 }
 
@@ -21,10 +30,27 @@ export function ClientForm({ client, onSubmit, onCancel }: ClientFormProps) {
     bank_account: client?.bank_account ?? "",
     notes: client?.notes ?? "",
   });
+  const [convType, setConvType] = useState<"phone" | "in_person">("phone");
+  const [convDate, setConvDate] = useState(() => {
+    const d = new Date();
+    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
+    return local.toISOString().slice(0, 16);
+  });
+  const [convNotes, setConvNotes] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(data as Omit<Client, "id" | "created_at" | "updated_at">);
+    const hasConversation = !client && convNotes.trim().length > 0;
+    onSubmit(
+      data as Omit<Client, "id" | "created_at" | "updated_at">,
+      hasConversation
+        ? {
+            type: convType,
+            date: convDate,
+            notes: convNotes.trim(),
+          }
+        : undefined
+    );
   };
 
   return (
@@ -137,6 +163,45 @@ export function ClientForm({ client, onSubmit, onCancel }: ClientFormProps) {
           className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-bg-card)] text-[var(--color-text)] placeholder:text-[var(--color-accent)]/60 focus:outline-none focus:border-[var(--color-accent)] resize-none"
         />
       </div>
+      {!client && (
+        <div className="conversation-panel p-3 rounded-lg space-y-2">
+          <p className="text-xs text-[var(--color-text-bright)] font-medium">
+            Conversation (optional)
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-[var(--color-accent)] mb-1">Type</label>
+              <select
+                value={convType}
+                onChange={(e) => setConvType(e.target.value as "phone" | "in_person")}
+                className="conversation-field w-full px-3 py-2 rounded-lg text-[var(--color-text)]"
+              >
+                <option value="phone">Phone</option>
+                <option value="in_person">In Person</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-[var(--color-accent)] mb-1">Date</label>
+              <input
+                type="datetime-local"
+                value={convDate}
+                onChange={(e) => setConvDate(e.target.value)}
+                className="conversation-field w-full px-3 py-2 rounded-lg text-[var(--color-text)]"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-[var(--color-accent)] mb-1">Conversation notes</label>
+            <textarea
+              value={convNotes}
+              onChange={(e) => setConvNotes(e.target.value)}
+              rows={3}
+              placeholder="What was discussed..."
+              className="conversation-field w-full px-3 py-2 rounded-lg text-[var(--color-text)] placeholder:text-[var(--color-accent)]/60 resize-none"
+            />
+          </div>
+        </div>
+      )}
       <div className="flex gap-2 pt-2">
         <button
           type="submit"

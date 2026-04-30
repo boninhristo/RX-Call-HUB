@@ -423,12 +423,12 @@ export function ClientDetail({ client, onBack, onUpdated }: ClientDetailProps) {
               type="datetime-local"
               value={convDate}
               onChange={(e) => setConvDate(e.target.value)}
-              className="px-3 py-2 rounded-lg bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm"
+              className="conversation-field px-3 py-2 rounded-lg text-[var(--color-text)] text-sm"
             />
             <select
               value={convType}
               onChange={(e) => setConvType(e.target.value as "phone" | "in_person")}
-              className="px-3 py-2 rounded-lg bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm"
+              className="conversation-field px-3 py-2 rounded-lg text-[var(--color-text)] text-sm"
             >
               <option value="phone">Phone</option>
               <option value="in_person">In Person</option>
@@ -452,7 +452,7 @@ export function ClientDetail({ client, onBack, onUpdated }: ClientDetailProps) {
               placeholder="Notes"
               value={convNotes}
               onChange={(e) => setConvNotes(e.target.value)}
-              className="px-3 py-2 rounded-lg bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm flex-1 min-w-[200px]"
+              className="conversation-field px-3 py-2 rounded-lg text-[var(--color-text)] text-sm flex-1 min-w-[200px]"
             />
             {editingConversation ? (
               <>

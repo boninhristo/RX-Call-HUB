@@ -26,3 +26,19 @@ table input {
   padding: 0.25rem 0.5rem;
   font-size: 0.8125rem;
 }
+
+.conversation-panel {
+  border: 1px solid color-mix(in srgb, #22d3ee 35%, var(--color-bg-card));
+  background: color-mix(in srgb, #0e7490 14%, var(--color-bg-secondary));
+}
+
+.conversation-field {
+  border: 1px solid color-mix(in srgb, #22d3ee 45%, var(--color-bg-card));
+  background: color-mix(in srgb, #0c4a6e 22%, var(--color-bg-card));
+}
+
+.conversation-field:focus {
+  outline: none;
+  border-color: #22d3ee;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #22d3ee 65%, transparent);
+}

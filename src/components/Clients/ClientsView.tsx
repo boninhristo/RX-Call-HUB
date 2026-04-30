@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { formatDateTime } from "../../lib/format";
 import {
+  addConversation,
   getClientsPage,
   fetchAllClientIdsForClientsList,
   getClient,
@@ -20,6 +21,7 @@ import {
 } from "../../lib/db";
 import type { AppRole } from "../../lib/auth";
 import { ClientForm } from "./ClientForm";
+import type { NewClientConversationDraft } from "./ClientForm";
 import { ClientDetail } from "./ClientDetail";
 import { useTableSelection } from "../../hooks/useTableSelection";
 import { onClientsChanged } from "../../lib/multiWindow";
@@ -168,8 +170,20 @@ export function ClientsView({ role, initialSelectedId, onNavigated }: ClientsVie
     }
   };
 
-  const handleCreate = async (data: any) => {
-    await createClient(data);
+  const handleCreate = async (
+    data: Omit<Client, "id" | "created_at" | "updated_at">,
+    conversation?: NewClientConversationDraft
+  ) => {
+    const hasConversation = !!conversation && conversation.notes.trim().length > 0;
+    const payload = {
+      ...data,
+      in_contact: hasConversation ? 1 : data.in_contact,
+    };
+    const clientId = await createClient(payload as any);
+    if (hasConversation && conversation) {
+      const convDateIso = new Date(conversation.date).toISOString();
+      await addConversation(clientId, convDateIso, conversation.type, conversation.notes);
+    }
     setShowForm(false);
     setPageIndex(0);
     resetListSort();
